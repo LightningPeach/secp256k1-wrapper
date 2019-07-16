@@ -9,8 +9,8 @@ description = "Wrapper for secp256k1 to build WebAssembly (wasm32-unknown-unknow
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies.secp256k1-c]
 package = "secp256k1"
-version = "0.13"
-features = ["rand"]
+version = "0.14.1"
+features = ["rand", "recovery"]
 
 [target.'cfg(target_arch = "wasm32")'.dependencies.secp256k1-r]
 package = "libsecp256k1"
