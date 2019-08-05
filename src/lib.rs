@@ -1,9 +1,13 @@
 extern crate secp256k1 as secp256k1_r;
+extern crate wasm_bindgen;
 
 use std::marker::PhantomData;
 use std::{fmt, error, ops::Deref, str};
 pub use self::key::*;
 
+use wasm_bindgen::prelude::*;
+
+#[wasm_bindgen]
 #[derive(Copy, PartialEq, Eq, Clone, Debug)]
 pub enum Error {
     /// Signature failed verification
@@ -73,6 +77,14 @@ impl Error {
     }
 }
 
+// TODO(mkl): why this not working
+//#[wasm_bindgen]
+//impl Error {
+//    pub fn as_string(&self) -> String {
+//        self.as_str().to_owned()
+//    }
+//}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         f.write_str(self.as_str())
@@ -82,12 +94,25 @@ impl fmt::Display for Error {
 impl error::Error for Error {
 }
 
+#[wasm_bindgen]
 #[derive(Clone, PartialEq, Eq)]
 pub struct Signature(secp256k1_r::Signature);
 
 impl fmt::Debug for Signature {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Display::fmt(self, f)
+    }
+}
+
+impl From<secp256k1_r::Signature> for Signature {
+    fn from(s: secp256k1_r::Signature) -> Self {
+        Signature(s)
+    }
+}
+
+impl From<Signature> for secp256k1_r::Signature {
+    fn from(s: Signature) -> Self {
+        s.0
     }
 }
 
@@ -102,6 +127,7 @@ impl fmt::Display for Signature {
 }
 
 /// A DER serialized Signature
+#[wasm_bindgen]
 #[derive(Copy, Clone)]
 pub struct SerializedSignature {
     data: [u8; 72],
@@ -220,6 +246,18 @@ impl Signature {
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 pub struct Message([u8; constants::MESSAGE_SIZE]);
 
+impl From<secp256k1_r::Message> for Message {
+    fn from(m: secp256k1_r::Message) -> Message {
+        Message(m.serialize())
+    }
+}
+
+impl From<Message> for secp256k1_r::Message {
+    fn from(m: Message) -> secp256k1_r::Message {
+        secp256k1_r::Message::parse(&m.0)
+    }
+}
+
 impl Message {
     pub fn from_slice(data: &[u8]) -> Result<Message, Error> {
         if data == [0; constants::MESSAGE_SIZE] {
@@ -280,6 +318,52 @@ impl Secp256k1<All> {
             phantom: PhantomData,
         }
     }
+}
+
+// TODO(mkl): It should be for Verification context. But then it wont compile
+impl Secp256k1<All> {
+    pub fn recover(&self, msg: &Message, sig: &recovery::RecoverableSignature)
+                   -> Result<PublicKey, Error> {
+        let rez = secp256k1_r::recover(
+            &secp256k1_r::Message::parse(&msg.0),
+            &sig.sig,
+            &sig.recovery_id
+        );
+        let pub_key_r = match rez {
+            Ok(pk) => pk,
+            Err(_) => return Err(Error::InvalidSignature)
+        };
+        Ok(pub_key_r.into())
+    }
+
+    /// Constructs a signature for `msg` using the secret key `sk` and RFC6979 nonce
+    /// Requires a signing-capable context.
+    pub fn sign_recoverable(&self, msg: &Message, sk: &key::SecretKey)
+    -> recovery::RecoverableSignature {
+
+        let (sig, recovery_id) = secp256k1_r::sign(
+            &msg.to_owned().into(),
+            &sk.to_owned().into()
+        ).unwrap();
+
+        recovery::RecoverableSignature {
+            sig: sig.into(),
+            recovery_id: recovery_id.into(),
+        }
+    }
+
+//    pub fn verify(&self, msg: &Message, sig: &Signature, pk: &key::PublicKey) -> Result<(), Error> {
+//        let rez = secp256k1_r::verify(
+//            &msg.clone().into(),
+//            &sig.clone().into(),
+//            &pk.clone().into(),
+//        );
+//        if rez {
+//            Ok(())
+//        } else {
+//            Err(Error::IncorrectSignature)
+//        }
+//    }
 }
 
 impl Default for Secp256k1<All> {
@@ -468,9 +552,10 @@ pub mod ecdh {
         use super::super::Secp256k1;
 
 //        TODO(mkl): fix this stuff. Maybe do not use random. Use some fixed constants to make it deterministic
+//        #[test]
 //        #[wasm_bindgen_test]
 //        fn ecdh() {
-//            let s = secp256k1_r::signing_only();
+//            let s = secp256k1_r::new();
 //            let (sk1, pk1) = s.generate_keypair(&mut thread_rng());
 //            let (sk2, pk2) = s.generate_keypair(&mut thread_rng());
 //
@@ -618,6 +703,12 @@ pub mod key {
 
     #[derive(Copy, Clone)]
     pub struct PublicKey(pub(crate) [u8; secp256k1_r::util::FULL_PUBLIC_KEY_SIZE]);
+
+    impl From<secp256k1_r::PublicKey> for PublicKey {
+        fn from(pk: secp256k1_r::PublicKey) -> Self {
+            PublicKey(pk.serialize())
+        }
+    }
 
     impl From<PublicKey> for secp256k1_r::PublicKey {
         fn from(v: PublicKey) -> Self {
@@ -787,6 +878,7 @@ pub mod key {
             });
         }
 
+        #[test]
         #[wasm_bindgen_test]
         fn skey_from_slice() {
             let sk = SecretKey::from_slice(&[1; 31]);
@@ -796,6 +888,7 @@ pub mod key {
             assert!(sk.is_ok());
         }
 
+        #[test]
         #[wasm_bindgen_test]
         fn pubkey_from_slice() {
             assert_eq!(PublicKey::from_slice(&[]), Err(InvalidPublicKey));
@@ -808,6 +901,7 @@ pub mod key {
             assert!(compressed.is_ok());
         }
 
+        #[test]
         #[wasm_bindgen_test]
         fn keypair_slice_round_trip() {
             let s = Secp256k1::new();
@@ -818,6 +912,7 @@ pub mod key {
             assert_eq!(PublicKey::from_slice(&pk1.serialize_uncompressed()[..]), Ok(pk1));
         }
 
+        #[test]
         #[wasm_bindgen_test]
         fn invalid_secret_key() {
             // Zero
@@ -840,6 +935,7 @@ pub mod key {
             ]).is_err());
         }
 
+        #[test]
         #[wasm_bindgen_test]
         fn test_out_of_range() {
             struct BadRng(u8);
@@ -869,6 +965,7 @@ pub mod key {
             s.generate_keypair(&mut BadRng(0xff));
         }
 
+        #[test]
         #[wasm_bindgen_test]
         fn test_pubkey_from_bad_slice() {
             // Bad sizes
@@ -900,6 +997,7 @@ pub mod key {
             );
         }
 
+        #[test]
         #[wasm_bindgen_test]
         fn test_debug_output() {
             struct DumbRng(u32);
@@ -928,6 +1026,7 @@ pub mod key {
             assert_eq!(&format!("{:?}", sk), "SecretKey(0100000000000000020000000000000003000000000000000400000000000000)");
         }
 
+        #[test]
         #[wasm_bindgen_test]
         fn test_display_output() {
             static SK_BYTES: [u8; 32] = [
@@ -981,6 +1080,7 @@ pub mod key {
             assert!(PublicKey::from_str(&long_str).is_err());
         }
 
+        #[test]
         #[wasm_bindgen_test]
         fn test_pubkey_serialize() {
             struct DumbRng(u32);
@@ -1010,6 +1110,7 @@ pub mod key {
                        &[3, 124, 121, 49, 14, 253, 63, 197, 50, 39, 194, 107, 17, 193, 219, 108, 154, 126, 9, 181, 248, 2, 12, 149, 233, 198, 71, 149, 134, 250, 184, 154, 229][..]);
         }
 
+        #[test]
         #[wasm_bindgen_test]
         fn test_addition() {
             let s = Secp256k1::new();
@@ -1028,6 +1129,7 @@ pub mod key {
             assert_eq!(PublicKey::from_secret_key(&s, &sk2), pk2);
         }
 
+        #[test]
         #[wasm_bindgen_test]
         fn test_multiplication() {
             let s = Secp256k1::new();
@@ -1046,6 +1148,7 @@ pub mod key {
             assert_eq!(PublicKey::from_secret_key(&s, &sk2), pk2);
         }
 
+        #[test]
         #[wasm_bindgen_test]
         fn pubkey_hash() {
             use std::collections::hash_map::DefaultHasher;
@@ -1070,6 +1173,7 @@ pub mod key {
             assert_eq!(count, COUNT);
         }
 
+        #[test]
         #[wasm_bindgen_test]
         fn pubkey_combine() {
             let compressed1 = PublicKey::from_slice(
@@ -1090,7 +1194,9 @@ pub mod key {
             assert_eq!(sum1.unwrap(), exp_sum);
         }
 
+        #[test]
         #[wasm_bindgen_test]
+        // TODO(mkl): fix comparison to make it compatible with secp256k1 C bindings
         fn pubkey_equal() {
             let pk1 = PublicKey::from_slice(
                 &hex!("0241cc121c419921942add6db6482fb36243faf83317c866d2a28d8c6d7089f7ba"),
@@ -1115,6 +1221,7 @@ pub mod key {
 
         #[cfg(feature = "serde")]
         #[wasm_bindgen_test]
+        #[test]
         fn test_signature_serde() {
             use serde_test::{Configure, Token, assert_tokens};
             static SK_BYTES: [u8; 32] = [
@@ -1167,6 +1274,7 @@ mod tests {
         });
     }
 
+    #[test]
     #[wasm_bindgen_test]
     fn capabilities() {
         let sign = Secp256k1::signing_only();
@@ -1196,6 +1304,7 @@ mod tests {
         assert_eq!(pk, new_pk);
     }
 
+    #[test]
     #[wasm_bindgen_test]
     fn signature_serialize_roundtrip() {
         let mut s = Secp256k1::new();
@@ -1223,6 +1332,7 @@ mod tests {
         }
     }
 
+    #[test]
     #[wasm_bindgen_test]
     fn signature_display() {
         let hex_str = "3046022100839c1fbc5304de944f697c9f4b1d01d1faeba32d751c0f7acb21ac8a0f436a72022100e89bd46bb3a5a62adc679f659b7ce876d83ee297c7a5587b2011c4fcc72eab45";
@@ -1271,6 +1381,7 @@ mod tests {
         })
     );
 
+    #[test]
     #[wasm_bindgen_test]
     fn signature_lax_der() {
         check_lax_sig!("304402204c2dd8a9b6f8d425fcd8ee9a20ac73b619906a6367eac6cb93e70375225ec0160220356878eff111ff3663d7e6bf08947f94443845e0dcc54961664d922f7660b80c");
@@ -1282,6 +1393,7 @@ mod tests {
         check_lax_sig!("3044022023ee4e95151b2fbbb08a72f35babe02830d14d54bd7ed1320e4751751d1baa4802206235245254f58fd1be6ff19ca291817da76da65c2f6d81d654b5185dd86b8acf");
     }
 
+    #[test]
     #[wasm_bindgen_test]
     fn sign_and_verify() {
         let mut s = Secp256k1::new();
@@ -1298,6 +1410,7 @@ mod tests {
         }
     }
 
+    #[test]
     #[wasm_bindgen_test]
     fn sign_and_verify_extreme() {
         let mut s = Secp256k1::new();
@@ -1327,6 +1440,7 @@ mod tests {
         }
     }
 
+    #[test]
     #[wasm_bindgen_test]
     fn sign_and_verify_fail() {
         let mut s = Secp256k1::new();
@@ -1346,6 +1460,7 @@ mod tests {
         assert_eq!(s.verify(&msg, &sig, &pk), Err(IncorrectSignature));
     }
 
+    #[test]
     #[wasm_bindgen_test]
     fn test_bad_slice() {
         assert_eq!(Signature::from_der(&[0; constants::MAX_SIGNATURE_SIZE + 1]),
@@ -1364,6 +1479,7 @@ mod tests {
         assert!(Message::from_slice(&[1; constants::MESSAGE_SIZE]).is_ok());
     }
 
+    #[test]
     #[wasm_bindgen_test]
     fn test_low_s() {
         // nb this is a transaction on testnet
@@ -1387,6 +1503,7 @@ mod tests {
 
     #[cfg(feature = "serde")]
     #[wasm_bindgen_test]
+    #[test]
     fn test_signature_serde() {
         use serde_test::{Configure, Token, assert_tokens};
 
@@ -1410,4 +1527,70 @@ mod tests {
         assert_tokens(&sig.compact(), &[Token::BorrowedBytes(&SIG_BYTES[..])]);
         assert_tokens(&sig.readable(), &[Token::BorrowedStr(SIG_STR)]);
     }
+}
+
+
+pub mod recovery {
+    use super::{Error, Signature};
+
+    #[derive(Clone, PartialEq, Eq)]
+    pub struct RecoveryId(i32);
+
+    impl RecoveryId {
+        pub fn from_i32(x: i32) -> Result<RecoveryId, Error> {
+            match x {
+                0 | 1 | 2 | 3 => Ok(RecoveryId(x)),
+                _ => Err(Error::InvalidRecoveryId),
+            }
+        }
+
+        pub fn to_i32(&self) -> i32 {
+            return self.0
+        }
+    }
+
+    impl From<secp256k1_r::RecoveryId> for RecoveryId {
+        fn from(x: secp256k1_r::RecoveryId) -> Self {
+            RecoveryId(x.serialize() as i32)
+        }
+    }
+
+    impl From<RecoveryId> for secp256k1_r::RecoveryId {
+        fn from(x: RecoveryId) -> Self {
+            secp256k1_r::RecoveryId::parse(x.0 as u8).unwrap()
+        }
+    }
+
+    // TODO(mkl): hide this field
+    #[derive(Clone, PartialEq, Eq, Debug)]
+    pub struct RecoverableSignature {
+        pub sig: secp256k1_r::Signature,
+        pub recovery_id: secp256k1_r::RecoveryId
+    }
+
+    impl RecoverableSignature {
+        pub fn to_standard(&self) -> Signature {
+            Signature(self.sig.clone())
+        }
+
+        pub fn serialize_compact(&self) -> (RecoveryId, [u8; 64]) {
+            (RecoveryId(self.recovery_id.serialize() as i32), self.sig.serialize())
+        }
+
+        pub fn from_compact(data: &[u8], recid: RecoveryId) -> Result<RecoverableSignature, Error> {
+            if data.len() != 64 {
+                return Err(Error::InvalidSignature)
+            }
+            let sig_r = match secp256k1_r::Signature::parse_slice(data) {
+                Ok(s) => s,
+                Err(_) => return Err(Error::InvalidSignature)
+            };
+            Ok(RecoverableSignature{
+                sig: sig_r,
+                recovery_id: recid.into(),
+            })
+        }
+    }
+
+
 }
