@@ -11,10 +11,9 @@ description = "Wrapper for secp256k1 to build WebAssembly (wasm32-unknown-unknow
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-
 [dependencies]
-libsecp256k1= "0.2.2"
-rand = { version ="0.6", features=["wasm-bindgen"] }
+libsecp256k1 = "0.2.2"
+rand = { version = "0.6", features = ["wasm-bindgen"], optioanl = true }
 wasm-bindgen = "0.2.37"
 
 [dev-dependencies]
