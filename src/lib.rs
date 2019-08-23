@@ -344,7 +344,7 @@ impl Secp256k1<All> {
         let (sig, recovery_id) = secp256k1_r::sign(
             &msg.to_owned().into(),
             &sk.to_owned().into()
-        ).unwrap();
+        );
 
         recovery::RecoverableSignature {
             sig: sig.into(),
@@ -396,7 +396,7 @@ impl<C: Signing> Secp256k1<C> {
     pub fn sign(&self, msg: &Message, sk: &key::SecretKey) -> Signature {
         let sk: secp256k1_r::SecretKey = sk.clone().into();
         let message = secp256k1_r::Message::parse(&msg.0);
-        Signature(secp256k1_r::sign(&message, &sk).unwrap().0)
+        Signature(secp256k1_r::sign(&message, &sk).0)
     }
 
     #[cfg(any(test, feature = "rand"))]
